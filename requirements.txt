@@ -1,7 +1,9 @@
+python-telegram-bot==21.4
+telethon==1.36.0
 requests
 telegram
-telethon
 telebot
 pyrogram
+
 
 
