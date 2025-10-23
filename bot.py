@@ -1,323 +1,212 @@
-import os
+
 import asyncio
-from telethon import TelegramClient, events, Button
-from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
+from telebot import TeleBot, types
+from pyrogram import Client
+from pyrogram.errors import FloodWait
+import os
 
-# بيانات API
-API_ID = 27227913  # ضع API_ID الخاص بك
-API_HASH = 'ba805b182eca99224403dbcd5d4f50aa'  # ضع API_HASH الخاص بك
-BOT_TOKEN = '8274634944:AAEOrWf0oBAgwaYcIRHAynVzDv43xqgXzec'  # ضع توكن البوت الخاص بك
+api_id = 27227913
+api_hash = 'ba805b182eca99224403dbcd5d4f50aa'
+session_string = "1AZWarzYBu3uqo-jioOzSFVj_tIgCcnLRmAaI0CGqrQ0_1rVr9iR333lxIJgpR956IVccBBcmhXyPGHdGppFD-1nV19gikNvhkLwNF1VCKlB72IaFd3tbYnLIK5Pn92a7InaF3SvrL0WUPTsmUY8nsAyTHHUkR07ZYzOZU3E1A19RIhov4wa_O09DS8M2tbTUVSezlHo5ip4VwairQa_GrpMl0eB9TgWfG215gXM5GQfcMnGpLVBLPPK2fyacVm3aUU1gVyX3qWz2r2OzOOnbC_ub-ZDLgfVlMHiXrCgUqjSlVxHVMiLlvhhprTV7v9PwCupL8mW-kjxkeFiUNGqWW3l-AuAVDdU="
 
-user_sessions = {}
+bot_token = "8274634944:AAEOrWf0oBAgwaYcIRHAynVzDv43xqgXzec"
+bot = TeleBot(bot_token)
 
-# عميل البوت
-bot_client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+client = Client("my_account", api_id=api_id, api_hash=api_hash, session_string=session_string)
+client.start()
 
-@bot_client.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    user_id = event.sender_id
+loop = asyncio.get_event_loop()
 
-    if user_id in user_sessions and user_sessions[user_id].get('logged_in'):
-        await show_main_menu(event)
-    else:
-        await show_login_menu(event)
+@bot.message_handler(commands=["start"])
+def start(message):
+    markup = types.InlineKeyboardMarkup([
+        [types.InlineKeyboardButton("تغيير معلومات الحساب", callback_data="change_info")],
+        [types.InlineKeyboardButton("قنوات", callback_data="channels")],
+        [types.InlineKeyboardButton("نشر في المجموعات", callback_data="post_to_groups")],
+        [types.InlineKeyboardButton("📸 صورتي", callback_data="send_photo")]  # زر "صورتي"
+    ])
+    bot.send_message(message.chat.id, "مرحبًا! اختر من الخيارات التالية:", reply_markup=markup)
 
-async def show_login_menu(event):
-    buttons = [
-        [Button.inline("📱 تسجيل الدخول", b"login")],
-        [Button.inline("ℹ️ مساعدة", b"help")]
-    ]
-    await event.reply("🔒 **مرحباً بك في بوت التحكم بالحساب**\n\nلتتمكن من استخدام البوت، تحتاج لتسجيل الدخول إلى حسابك Telegram\n\nانقر على الزر أدناه للبدء:", buttons=buttons)
-
-async def show_main_menu(event):
-    buttons = [
-        [Button.inline("🖼 تغيير الصورة", b"change_profile"), Button.inline("✏️ تغيير الاسم", b"change_name")],
-        [Button.inline("🔄 تغيير متكرر", b"auto_change"), Button.inline("📊 معلومات الحساب", b"account_info")],
-        [Button.inline("🚪 تسجيل الخروج", b"logout")]
-    ]
-    await event.reply("🎮 **لوحة التحكم الرئيسية**\n\nاختر الأمر الذي تريد تنفيذه:", buttons=buttons)
-
-@bot_client.on(events.CallbackQuery)
-async def callback_handler(event):
-    user_id = event.sender_id
-    data = event.data.decode('utf-8')
-    
-    if data == "login":
-        await start_login_process(event)
-    elif data == "help":
-        await show_help(event)
-    elif data == "change_profile":
-        await change_profile_start(event)
-    elif data == "change_name":
-        await change_name_start(event)
-    elif data == "auto_change":
-        await auto_change_start(event)
-    elif data == "account_info":
-        await account_info(event)
-    elif data == "logout":
-        await logout_user(event)
-    elif data.startswith("confirm_"):
-        await handle_confirmation(event, data)
-
-async def start_login_process(event):
-    user_id = event.sender_id
-    user_sessions[user_id] = {'step': 'phone', 'client': None, 'logged_in': False}
-
-    await event.edit("📱 **مرحلة إدخال رقم الهاتف**\n\nالرجاء إرسال رقم هاتفك مع مفتاح الدولة\n\nمثال: +201234567890", buttons=[[Button.inline("🔙 رجوع", b="help")]])
-
-async def show_help(event):
-    await event.edit("ℹ️ تعليمات استخدام البوت\n\n• البوت يسمح لك بالتحكم في حسابك الشخصي\n• تحتاج لتسجيل الدخول أولاً باستخدام رقم الهاتف\n• يمكنك تغيير الصورة والاسم بشكل يدوي أو تلقائي\n• بيانات التسجيل محفوظة بشكل آمن\n\nانقر على زر تسجيل الدخول للبدء:", buttons=[[Button.inline("📱 تسجيل الدخول", b="login")]])
-
-@bot_client.on(events.NewMessage)
-async def handle_messages(event):
-    user_id = event.sender_id
-
-    # تجاهل الرسائل من القنوات والمجموعات  
-    if not event.is_private:  
-        return  
-
-    # إذا كان المستخدم في عملية تسجيل دخول  
-    if user_id in user_sessions and not user_sessions[user_id].get('logged_in'):
-        await handle_login_steps(event)
-        
-    # إذا كان المستخدم مسجل دخوله  
-    if user_id in user_sessions and user_sessions[user_id].get('logged_in'):
-        # معالجة الأوامر النصية  
-        if event.text.startswith('/'):
-            return
-        
-        # إذا كان في عملية تغيير الصورة
-        if user_sessions[user_id].get('waiting_for_photo'):
-            await handle_photo_upload(event)
-        # إذا كان في عملية تغيير الاسم 
-        elif user_sessions[user_id].get('waiting_for_name'):
-            await handle_name_change(event)
-
-async def handle_login_steps(event):
-    user_id = event.sender_id
-    session_data = user_sessions[user_id]
-    step = session_data['step']
-
+# دالة لإرسال صورة الملف الشخصي
+@bot.callback_query_handler(func=lambda call: call.data == "send_photo")
+def send_profile_photo(call):
+    user_id = call.from_user.id
     try:
-        if step == 'phone':
-            phone = event.text.strip()
-            
-            if not phone.startswith('+'):
-                await event.reply("❌ الرجاء إدخال رقم الهاتف مع مفتاح الدولة بدءاً بـ +")  
-                return
-            
-            session_data['client'] = TelegramClient(f'sessions/{user_id}_session', API_ID, API_HASH)
-            client = session_data['client']
-            
-            await client.connect()
-            await client.send_code_request(phone)
-            
-            session_data['phone'] = phone
-            session_data['step'] = 'code'
-
-            await event.reply("🔐 **مرحلة إدخال كود التحقق**\n\nتم إرسال كود التحقق إلى حسابك\nالرجاء إرسال الكود مع المسافات بين الأرقام\n\nمثال: 1 2 3 4 5")
-            
-        elif step == 'code':
-            code = event.text.strip().replace(' ', '')
-
-            if not code.isdigit():
-                await event.reply("❌ الرجاء إدخال كود تحقق صحيح (أرقام فقط)")
-                return
-            
-            client = session_data['client']
-
-            try:
-                await client.sign_in(session_data['phone'], code)
-                
-                session_data['logged_in'] = True
-                me = await client.get_me()
-                
-                session_data['user_info'] = {
-                    'first_name': me.first_name,
-                    'username': me.username,
-                    'phone': me.phone
-                }
-
-                await event.reply(f"✅ **تم تسجيل الدخول بنجاح!**\n\n👤 الاسم: {me.first_name or 'غير محدد'}\n📞 الهاتف: {me.phone}\n🔗 اليوزر: @{me.username or 'غير محدد'}\n\nيمكنك الآن استخدام جميع ميزات البوت")
-                await show_main_menu(event)
-                
-            except Exception as e:
-                if "two-steps" in str(e):
-                    session_data['step'] = 'password'
-                    await event.reply("🔒 **مرحلة التحقق بخطوتين**\n\nحسابك محمي بكلمة مرور ثنائية\nالرجاء إرسال كلمة المرور:")
-                else:
-                    await event.reply(f"❌ خطأ في التسجيل: {str(e)}")
-                    await cleanup_session(user_id)
-
-        elif step == 'password':
-            password = event.text.strip()
-            client = session_data['client']
-
-            try:
-                await client.sign_in(password=password)
-                session_data['logged_in'] = True
-
-                me = await client.get_me()
-                session_data['user_info'] = {
-                    'first_name': me.first_name,
-                    'username': me.username,
-                    'phone': me.phone
-                }
-
-                await event.reply(f"✅ **تم تسجيل الدخول بنجاح!**\n\n👤 الاسم: {me.first_name or 'غير محدد'}\n📞 الهاتف: {me.phone}\n🔗 اليوزر: @{me.username or 'غير محدد'}\n\nيمكنك الآن استخدام جميع ميزات البوت")
-                await show_main_menu(event)
-                
-            except Exception as e:
-                await event.reply(f"❌ خطأ في كلمة المرور: {str(e)}")
-                await cleanup_session(user_id)
-    
-    except Exception as e:
-        await event.reply(f"❌ حدث خطأ أثناء التسجيل: {str(e)}")
-        await cleanup_session(user_id)
-
-async def change_profile_start(event):
-    user_id = event.sender_id
-
-    if not await check_user_login(user_id):  
-        await event.answer("❌ الرجاء تسجيل الدخول أولاً", alert=True)  
-        return  
-
-    user_sessions[user_id]['waiting_for_photo'] = True  
-
-    await event.edit("🖼 **تغيير صورة الملف الشخصي**\n\nالرجاء إرسال الصورة التي تريد وضعها كصورة ملفك الشخصي:", buttons=[[Button.inline("🔙 رجوع", b="help")]])
-
-async def handle_photo_upload(event):
-    user_id = event.sender_id
-
-    if not event.media:  
-        await event.reply("❌ الرجاء إرسال صورة صحيحة")  
-        return  
-
-    try:  
-        client = user_sessions[user_id]['client']  
-        
-        # تحميل الصورة  
-        photo_path = await event.download_media(file="temp_photo.jpg")  
-        
-        # حذف الصور السابقة  
-        photos = await client.get_profile_photos('me')  
-        if photos:  
-            await client(DeletePhotosRequest(photos))  
-        
-        # رفع الصورة الجديدة  
-        uploaded_file = await client.upload_file(photo_path)  
-        await client(UploadProfilePhotoRequest(file=uploaded_file))  
-        
-        # تنظيف  
-        if os.path.exists(photo_path):  
-            os.remove(photo_path)  
-        
-        user_sessions[user_id]['waiting_for_photo'] = False  
-        
-        await event.reply("✅ تم تغيير صورة الملف الشخصي بنجاح!")  
-        await show_main_menu(event)  
-        
-    except Exception as e:  
-        await event.reply(f"❌ خطأ في تغيير الصورة: {str(e)}")  
-        user_sessions[user_id]['waiting_for_photo'] = False
-
-async def change_name_start(event):
-    user_id = event.sender_id
-
-    if not await check_user_login(user_id):  
-        await event.answer("❌ الرجاء تسجيل الدخول أولاً", alert=True)  
-        return  
-
-    user_sessions[user_id]['waiting_for_name'] = True  
-
-    await event.edit("✏️ **تغيير اسم الملف الشخصي**\n\nالرجاء إرسال الاسم الجديد:", buttons=[[Button.inline("🔙 رجوع", b="help")]])
-
-async def handle_name_change(event):
-    user_id = event.sender_id
-    new_name = event.text.strip()
-
-    try:
-        if new_name and len(new_name) > 0:
-            client = user_sessions[user_id]['client']  
-            await client(UpdateProfileRequest(first_name=new_name))  
-            
-            user_sessions[user_id]['waiting_for_name'] = False  
-            user_sessions[user_id]['user_info']['first_name'] = new_name  
-            
-            await event.reply(f"✅ تم تغيير الاسم إلى: {new_name}")  
-            await show_main_menu(event)  
+        # جلب الصورة الشخصية للمستخدم
+        photos = bot.get_user_profile_photos(user_id)
+        if photos.total_count > 0:
+            # إرسال آخر صورة شخصية للمستخدم
+            bot.send_photo(call.message.chat.id, photos.photos[0][-1].file_id)
         else:
-            await event.reply("❌ الاسم يجب أن لا يكون فارغًا!")  
-            user_sessions[user_id]['waiting_for_name'] = False  
-        
-    except Exception as e:  
-        await event.reply(f"❌ خطأ في تغيير الاسم: {str(e)}")  
-        user_sessions[user_id]['waiting_for_name'] = False
+            bot.send_message(call.message.chat.id, "لم أتمكن من العثور على صورة شخصية لك.")
+    except Exception as e:
+        bot.send_message(call.message.chat.id, "حدث خطأ أثناء محاولة جلب الصورة.")
 
-async def auto_change_start(event):
-    user_id = event.sender_id
+@bot.callback_query_handler(func=lambda call: call.data == "post_to_groups")
+def post_to_groups(call):
+    bot.send_message(call.message.chat.id, "أرسل لي محتوى الرسالة.")
+    bot.register_next_step_handler(call.message, get_message_content)
 
-    if not await check_user_login(user_id):  
-        await event.answer("❌ الرجاء تسجيل الدخول أولاً", alert=True)  
-        return  
+def get_message_content(message):
+    content = message.text
+    bot.send_message(message.chat.id, "أرسل لي عدد الرسائل.")
+    bot.register_next_step_handler(message, lambda msg: get_number_of_messages(msg, content))
 
-    await event.edit("🔄 **التغيير المتكرر للصورة**\n\nهذه الميزة تسمح بتغيير الصورة عدة مرات تلقائياً\n\nسيتم إضافتها في تحديث قريب!", buttons=[[Button.inline("🔙 رجوع", b="help")]])
+def get_number_of_messages(message, content):
+    try:
+        number_of_messages = int(message.text)
+        bot.send_message(message.chat.id, "أرسل لي الثواني لتكرار الرسالة.")
+        bot.register_next_step_handler(message, lambda msg: get_delay(msg, content, number_of_messages))
+    except ValueError:
+        bot.send_message(message.chat.id, "يرجى إدخال رقم صحيح لعدد الرسائل.")
+        bot.register_next_step_handler(message, lambda msg: get_number_of_messages(msg, content))
 
-async def account_info(event):
-    user_id = event.sender_id
+def get_delay(message, content, number_of_messages):
+    try:
+        delay = int(message.text)
+        bot.send_message(message.chat.id, "أرسل لي معرف المجموعة.")
+        bot.register_next_step_handler(message, lambda msg: post_messages(msg, content, number_of_messages, delay))
+    except ValueError:
+        bot.send_message(message.chat.id, "يرجى إدخال رقم صحيح للثواني.")
+        bot.register_next_step_handler(message, lambda msg: get_delay(msg, content, number_of_messages))
 
-    if not await check_user_login(user_id):  
-        await event.answer("❌ الرجاء تسجيل الدخول أولاً", alert=True)  
-        return  
+def post_messages(message, content, number_of_messages, delay):
+    group_id = message.text
+    loop.run_until_complete(async_post_to_group(content, number_of_messages, delay, group_id))
 
-    user_info = user_sessions[user_id]['user_info']  
-
-    await event.edit(f"📊 **معلومات الحساب**\n\n👤 الاسم: {user_info['first_name'] or 'غير محدد'}\n📞 الهاتف: {user_info['phone']}\n🔗 اليوزر: @{user_info['username'] or 'غير محدد'}\n\n🆔 ID: {user_id}", buttons=[[Button.inline("🔙 رجوع", b="help")]])
-
-async def logout_user(event):
-    user_id = event.sender_id
-
-    buttons = [[Button.inline("✅ نعم، تأكيد", b="confirm_logout"), Button.inline("❌ إلغاء", b="help")]]
-    
-    await event.edit("🚪 **تسجيل الخروج**\n\nهل أنت متأكد من أنك تريد تسجيل الخروج؟\nسيتم إغلاق جلسة حسابك في البوت.", buttons=buttons)()
-
-async def handle_confirmation(event, data):
-    user_id = event.sender_id
-
-    if data == "confirm_logout":  
-        await cleanup_session(user_id)  
-        await event.edit("✅ **تم تسجيل الخروج بنجاح**\n\nشكراً لاستخدامك البوت\nيمكنك تسجيل الدخول مرة أخرى في أي وقت", buttons=[[Button.inline("📱 تسجيل الدخول", b="login")]])
-
-async def check_user_login(user_id):
-    if user_id not in user_sessions or not user_sessions[user_id].get('logged_in'):  
-        return False  
-
-    try:  
-        client = user_sessions[user_id]['client']  
-        if not client.is_connected():  
-            await client.connect()  
-        return True  
-    except:  
-        return False
-
-async def cleanup_session(user_id):
-    if user_id in user_sessions:
+async def async_post_to_group(content, number_of_messages, delay, group_id):
+    for _ in range(number_of_messages):
         try:
-            client = user_sessions[user_id].get('client')
-            if client and client.is_connected():
-                await client.disconnect()
-        except:
-            pass
-        del user_sessions[user_id]
+            await client.send_message(group_id, content)
+            await asyncio.sleep(delay)
+        except FloodWait as e:
+            await asyncio.sleep(e.x)
+        except Exception as e:
+            bot.send_message(message.chat.id, f"خطأ أثناء نشر الرسالة: {e}")
+            return
+    bot.send_message(message.chat.id, "تم نشر الرسائل بنجاح.")
 
-async def main():
-    # إنشاء مجلد الجلسات إذا لم يكن موجوداً
-    if not os.path.exists('sessions'):
-        os.makedirs('sessions')
+@bot.callback_query_handler(func=lambda call: call.data == "change_info")
+def change_info(call):
+    markup = types.InlineKeyboardMarkup([
+        [types.InlineKeyboardButton("تغيير الاسم", callback_data="change_name")],
+        [types.InlineKeyboardButton("تغيير اسم المستخدم", callback_data="change_username")],
+        [types.InlineKeyboardButton("تغيير النبذة", callback_data="change_bio")],
+        [types.InlineKeyboardButton("تغيير الصورة الشخصية", callback_data="change_photo")]
+    ])
+    bot.edit_message_text("اختر ما تريد تغييره:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
-    print("✅ البوت يعمل الآن!")  
-    await bot_client.run_until_disconnected()
+@bot.callback_query_handler(func=lambda call: call.data == "change_photo")
+def change_photo(call):
+    bot.send_message(call.message.chat.id, "أرسل لي الصورة الجديدة لتغييرها.")
+    bot.register_next_step_handler(call.message, handle_photo)
 
-if __name__ == '__main__':
-    bot_client.loop.run_until_complete(main())
+def handle_photo(message):
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        # احفظ الصورة كملف مؤقت
+        with open("temp_photo.jpg", "wb") as new_file:
+            new_file.write(downloaded_file)
+
+        # تحديث صورة الملف الشخصي
+        loop.run_until_complete(async_set_photo("temp_photo.jpg", message))
+
+        # احذف الملف المؤقت بعد الاستخدام
+        os.remove("temp_photo.jpg")
+    else:
+        bot.send_message(message.chat.id, "لم يتم استلام صورة. الرجاء المحاولة مرة أخرى.")
+
+async def async_set_photo(photo_path, message):
+    try:
+        with client:
+            await client.set_profile_photo(photo=photo_path)
+        bot.send_message(message.chat.id, "تم تغيير الصورة الشخصية بنجاح.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"خطأ: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_name")
+def change_name(call):
+    bot.send_message(call.message.chat.id, "أرسل لي الاسم الجديد.")
+    bot.register_next_step_handler(call.message, set_name)
+
+def set_name(message):
+    loop.run_until_complete(async_set_name(message))
+
+async def async_set_name(message):
+    with client:
+        await client.update_profile(first_name=message.text)
+    bot.send_message(message.chat.id, f"تم تغيير الاسم إلى {message.text}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_username")
+def change_username(call):
+    bot.send_message(call.message.chat.id, "أرسل لي اسم المستخدم الجديد.")
+    bot.register_next_step_handler(call.message, set_username)
+
+def set_username(message):
+    loop.run_until_complete(async_set_username(message))
+
+async def async_set_username(message):
+    try:
+        await client.set_username(message.text)
+        bot.send_message(message.chat.id, f"تم تغيير اسم المستخدم إلى {message.text}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"خطأ: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "change_bio")
+def change_bio(call):
+    bot.send_message(call.message.chat.id, "أرسل لي النبذة الجديدة.")
+    bot.register_next_step_handler(call.message, set_bio)
+
+def set_bio(message):
+    loop.run_until_complete(async_set_bio(message))
+
+async def async_set_bio(message):
+    try:
+        await client.update_profile(bio=message.text)
+        bot.send_message(message.chat.id, f"تم تغيير النبذة إلى {message.text}")
+    except:
+        pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "channels")
+def channels(call):
+    markup = types.InlineKeyboardMarkup([
+        [types.InlineKeyboardButton("انضمام إلى قناة", callback_data="join_channel")],
+        [types.InlineKeyboardButton("مغادرة من قناة", callback_data="leave_channel")]
+    ])
+    bot.edit_message_text("اختر ما تريد فعله في القنوات:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "join_channel")
+def join_channel(call):
+    bot.send_message(call.message.chat.id, "أرسل لي رابط القناة للانضمام إليها.")
+    bot.register_next_step_handler(call.message, join_channel_action)
+
+def join_channel_action(message):
+    loop.run_until_complete(async_join_channel(message))
+
+async def async_join_channel(message):
+    try:
+        await client.join_chat(message.text)
+        bot.send_message(message.chat.id, f"تم الانضمام إلى القناة {message.text}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"خطأ: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "leave_channel")
+def leave_channel(call):
+    bot.send_message(call.message.chat.id, "أرسل لي رابط القناة للمغادرة منها.")
+    bot.register_next_step_handler(call.message, leave_channel_action)
+
+def leave_channel_action(message):
+    loop.run_until_complete(async_leave_channel(message))
+
+async def async_leave_channel(message):
+    try:
+        await client.leave_chat(message.text)
+        bot.send_message(message.chat.id, f"تم مغادرة القناة {message.text}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"خطأ: {e}")
+
+if __name__ == "__main__":
+    bot.polling(none_stop=True)
