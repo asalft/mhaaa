@@ -1,10 +1,9 @@
-python-telegram-bot==21.4
-telethon==1.36.0
+telethon
 requests
 telegram
 telebot
 pyrogram
-CallbackQueryHandler
+
 
 
 
