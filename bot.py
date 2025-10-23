@@ -7,7 +7,7 @@ import os
 # بيانات الاتصال (استبدلها ببياناتك الحقيقية)
 api_id = '27227913'  # رقم API ID من my.telegram.org
 api_hash = 'ba805b182eca99224403dbcd5d4f50aa'  # سلسلة API Hash
-session_file = 'my_session'  # اسم ملف الجلسة (مثل my_account.session) أو استخدم string إذا كان لديك
+session_file = 'my_session.txt'  # اسم ملف الجلسة (مثل my_account.session) أو استخدم string إذا كان لديك
 
 # إنشاء العميل
 client = TelegramClient(session_file, api_id, api_hash)
