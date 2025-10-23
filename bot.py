@@ -1,7 +1,7 @@
 import asyncio
 from telebot import TeleBot, types
 from pyrogram import Client
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, PhoneCodeInvalid, SessionPasswordNeeded
 import os
 import logging
 
@@ -9,18 +9,31 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# بيانات API تليجرام (احصل عليها من my.telegram.org)
 api_id = 27227913
 api_hash = 'ba805b182eca99224403dbcd5d4f50aa'
-session_string = "1AZWarzYBu3uqo-jioOzSFVj_tIgCcnLRmAaI0CGqrQ0_1rVr9iR333lxIJgpR956IVccBBcmhXyPGHdGppFD-1nV19gikNvhkLwNF1VCKlB72IaFd3tbYnLIK5Pn92a7InaF3SvrL0WUPTsmUY8nsAyTHHUkR07ZYzOZU3E1A19RIhov4wa_O09DS8M2tbTUVSezlHo5ip4VwairQa_GrpMl0eB9TgWfG215gXM5GQfcMnGpLVBLPPK2fyacVm3aUU1gVyX3qWz2r2OzOOnbC_ub-ZDLgfVlMHiXrCgUqjSlVxHVMiLlvhhprTV7v9PwCupL8mW-kjxkeFiUNGqWW3l-AuAVDdU="
+
+# رقم الهاتف للتسجيل (أدخل رقمك بالشكل الدولي، مثل +1234567890)
+phone_number = "+9647776215642"  # غيّر هذا برقمك الحقيقي
 
 bot_token = "8274634944:AAEOrWf0oBAgwaYcIRHAynVzDv43xqgXzec"
 bot = TeleBot(bot_token)
 
-client = Client("my_account", api_id=api_id, api_hash=api_hash, session_string=session_string)
+client = Client("my_account", api_id=api_id, api_hash=api_hash, phone_number=phone_number)
 
-# دالة لتشغيل العميل
+# دالة لتشغيل العميل (ستطلب الكود إذا لزم الأمر عبر الـ terminal)
 async def start_client():
-    await client.start()
+    try:
+        await client.start()
+        logger.info("تم تسجيل الدخول بنجاح عبر رقم الهاتف")
+    except PhoneCodeInvalid:
+        logger.error("كود التحقق غير صحيح. أعد المحاولة")
+    except SessionPasswordNeeded:
+        password = input("أدخل كلمة مرور حسابك (2FA): ")
+        await client.check_password(password)
+        logger.info("تم تسجيل الدخول بنجاح بعد كلمة المرور")
+    except Exception as e:
+        logger.error(f"خطأ في تسجيل الدخول: {e}")
 
 # دالة لإيقاف العميل
 async def stop_client():
@@ -148,9 +161,115 @@ def change_info(call):
         [types.InlineKeyboardButton("تغيير الاسم", callback_data="change_name")],
         [types.InlineKeyboardButton("تغيير اسم المستخدم", callback_data="change_username")],
         [types.InlineKeyboardButton("تغيير النبذة", callback_data="change_bio")],
-        [types.InlineKeyboardButton("تغيير الصورة الشخصية", callback_data="change_photo")]
+        [types.InlineKeyboardButton("تغيير الصورة الشخصية", callback_data="change_photo")],
+        [types.InlineKeyboardButton("تكرار الصورة", callback_data="repeat_photo")]  # زر جديد لتكرار الصورة
     ])
     bot.edit_message_text("اختر ما تريد تغييره:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+# معالج لتكرار الصورة
+@bot.callback_query_handler(func=lambda call: call.data == "repeat_photo")
+def repeat_photo(call):
+    user_id = call.from_user.id
+    user_data[user_id] = {'step': 'waiting_repeat_photo'}
+    bot.send_message(call.message.chat.id, "أرسل لي الصورة لتكرار تعيينها.")
+    bot.register_next_step_handler(call.message, handle_repeat_photo)
+
+def handle_repeat_photo(message):
+    user_id = message.from_user.id
+    if user_id not in user_data or user_data[user_id]['step'] != 'waiting_repeat_photo':
+        bot.send_message(message.chat.id, "يرجى البدء من جديد باستخدام /start")
+        return
+    
+    if message.photo:
+        try:
+            file_id = message.photo[-1].file_id
+            file_info = bot.get_file(file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+
+            # احفظ الصورة كملف مؤقت
+            photo_path = f"temp_repeat_photo_{user_id}.jpg"
+            with open(photo_path, "wb") as new_file:
+                new_file.write(downloaded_file)
+
+            user_data[user_id]['photo_path'] = photo_path
+            user_data[user_id]['step'] = 'waiting_repeat_number'
+            bot.send_message(message.chat.id, "أرسل عدد التكرارات.")
+            bot.register_next_step_handler(message, get_repeat_number)
+            
+        except Exception as e:
+            logger.error(f"Error handling repeat photo: {e}")
+            bot.send_message(message.chat.id, f"حدث خطأ أثناء معالجة الصورة: {str(e)}")
+    else:
+        bot.send_message(message.chat.id, "لم يتم استلام صورة. الرجاء المحاولة مرة أخرى.")
+        bot.register_next_step_handler(message, handle_repeat_photo)
+
+def get_repeat_number(message):
+    user_id = message.from_user.id
+    if user_id not in user_data or 'photo_path' not in user_data[user_id]:
+        bot.send_message(message.chat.id, "يرجى البدء من جديد باستخدام /start")
+        return
+    
+    try:
+        number = int(message.text)
+        user_data[user_id]['number'] = number
+        user_data[user_id]['step'] = 'waiting_repeat_delay'
+        bot.send_message(message.chat.id, "أرسل الثواني بين كل تعيين (مثال: 5 لـ 5 ثواني).")
+        bot.register_next_step_handler(message, get_repeat_delay)
+    except ValueError:
+        bot.send_message(message.chat.id, "يرجى إدخال رقم صحيح لعدد التكرارات.")
+        bot.register_next_step_handler(message, get_repeat_number)
+
+def get_repeat_delay(message):
+    user_id = message.from_user.id
+    if user_id not in user_data or 'photo_path' not in user_data[user_id]:
+        bot.send_message(message.chat.id, "يرجى البدء من جديد باستخدام /start")
+        return
+    
+    try:
+        delay = int(message.text)
+        photo_path = user_data[user_id]['photo_path']
+        number = user_data[user_id]['number']
+        
+        # تشغيل المهمة في الخلفية
+        asyncio.create_task(async_repeat_photo(photo_path, number, delay, message))
+        
+        # تنظيف user_data
+        user_data.pop(user_id, None)
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "يرجى إدخال رقم صحيح للثواني.")
+        bot.register_next_step_handler(message, get_repeat_delay)
+
+async def async_repeat_photo(photo_path, number, delay, message):
+    success_count = 0
+    chat_id = message.chat.id
+    try:
+        for i in range(number):
+            try:
+                await client.set_profile_photo(photo=photo_path)
+                success_count += 1
+                if i < number - 1:
+                    await asyncio.sleep(delay)
+                bot.send_message(chat_id, f"تم تعيين الصورة {i+1}/{number}")
+            except FloodWait as e:
+                logger.warning(f"Flood wait for {e.x} seconds")
+                await asyncio.sleep(e.x)
+            except Exception as e:
+                logger.error(f"Error setting photo: {e}")
+                bot.send_message(chat_id, f"خطأ أثناء تعيين الصورة {i+1}: {str(e)}")
+                continue
+        
+        bot.send_message(chat_id, f"تم تكرار تعيين الصورة {success_count} من أصل {number} مرة بنجاح.")
+    except Exception as e:
+        logger.error(f"General error in repeat photo: {e}")
+        bot.send_message(chat_id, f"خطأ عام أثناء تكرار الصورة: {str(e)}")
+    finally:
+        # حذف الملف المؤقت
+        if os.path.exists(photo_path):
+            try:
+                os.remove(photo_path)
+            except:
+                pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "change_photo")
 def change_photo(call):
@@ -365,6 +484,15 @@ def handle_all_messages(message):
             return
         elif step == 'waiting_photo':
             handle_photo(message)
+            return
+        elif step == 'waiting_repeat_photo':
+            handle_repeat_photo(message)
+            return
+        elif step == 'waiting_repeat_number':
+            get_repeat_number(message)
+            return
+        elif step == 'waiting_repeat_delay':
+            get_repeat_delay(message)
             return
         elif step == 'waiting_name':
             set_name(message)
