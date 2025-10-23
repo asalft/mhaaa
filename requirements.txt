@@ -2,4 +2,6 @@ requests
 telegram
 telethon
 telebot
+pyrogram
+
 
