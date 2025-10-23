@@ -21,34 +21,45 @@ API_ID = 27227913
 API_HASH = 'ba805b182eca99224403dbcd5d4f50aa'
 
 # إنشاء البوت
-bot = TeleBot(BOT_TOKEN)
+bot = TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-# Telethon عميل الحساب الشخصي
+# Telethon client
 user_client = None
 login_states = {}   # {user_id: {'state': 'phone|code|password|authorized', 'phone': '+number'}}
 input_states = {}   # {user_id: 'set_name|set_bio|set_photo'}
 
-# === دوال مساعدة ===
-def create_user_client():
-    global user_client
-    user_session = StringSession()
-    user_client = TelegramClient(user_session, API_ID, API_HASH)
-    return user_client
+# === إعداد event loop دائم ===
+loop = asyncio.new_event_loop()
+threading.Thread(target=loop.run_forever, daemon=True).start()
 
 def run_async(coro):
-    """تشغيل coroutine بشكل متزامن داخل thread آمن"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(coro)
-    loop.close()
-    return result
+    """تشغيل coroutine بأمان داخل loop دائم"""
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()
 
-def is_authorized_sync():
-    """التحقق من الصلاحية"""
+# === دوال المساعدة ===
+def create_user_client():
+    """إنشاء عميل Telethon جديد"""
+    global user_client
+    if user_client is None or not user_client.is_connected():
+        session = StringSession()
+        user_client = TelegramClient(session, API_ID, API_HASH)
+    return user_client
+
+def ensure_client_connected():
+    """تأكيد اتصال العميل"""
     global user_client
     if user_client is None:
-        return False
+        create_user_client()
+    if not run_async(user_client.is_connected()):
+        run_async(user_client.connect())
+
+def is_authorized_sync():
+    """التحقق من أن الجلسة مصرح بها"""
+    global user_client
     try:
+        if user_client is None:
+            return False
+        ensure_client_connected()
         return run_async(user_client.is_user_authorized())
     except Exception:
         return False
@@ -71,24 +82,6 @@ def main_keyboard():
     markup.add(types.InlineKeyboardButton("❌ إغلاق", callback_data="close"))
     return markup
 
-def login_keyboard():
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📱 أرسل رقم الهاتف", callback_data="login_phone"))
-    markup.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel"))
-    return markup
-
-def code_keyboard():
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔢 أرسل رمز التحقق", callback_data="login_code"))
-    markup.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel"))
-    return markup
-
-def password_keyboard():
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔒 أرسل كلمة المرور", callback_data="login_password"))
-    markup.add(types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel"))
-    return markup
-
 def help_keyboard():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -104,11 +97,11 @@ def help_keyboard():
 def start_command(message):
     bot.send_message(
         message.chat.id,
-        "✅ مرحباً! استخدم الأزرار أدناه للتحكم في حسابك الشخصي.\n\n"
-        "ابدأ بتسجيل الدخول أولاً.",
+        "✅ <b>مرحباً!</b>\nاستخدم الأزرار أدناه للتحكم في حسابك الشخصي.\n\nابدأ بتسجيل الدخول أولاً.",
         reply_markup=main_keyboard()
     )
 
+# === الأزرار ===
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     global user_client
@@ -170,7 +163,7 @@ def callback_handler(call):
         if not is_authorized_sync():
             bot.edit_message_text("❌ قم بتسجيل الدخول أولاً!", call.message.chat.id, call.message.message_id)
             return
-        bot.edit_message_text("📷 أرسل مسار الصورة (مثال: photo.jpg):", call.message.chat.id, call.message.message_id)
+        bot.edit_message_text("📷 أرسل <b>مسار الصورة</b> (مثال: photo.jpg):", call.message.chat.id, call.message.message_id)
         input_states[user_id] = 'set_photo'
         return
 
@@ -188,14 +181,16 @@ def handle_text(message):
             bot.reply_to(message, "❌ الرقم يجب أن يبدأ بـ +.\nأعد الإرسال:")
             return
         create_user_client()
-        run_async(user_client.connect())
+        ensure_client_connected()
         try:
             run_async(user_client.send_code_request(text))
             login_states[user_id] = {'phone': text, 'state': 'code'}
-            bot.reply_to(message, "✅ تم إرسال رمز التحقق إلى حسابك.\nأرسل الرمز الآن:")
+            bot.reply_to(message, "✅ تم إرسال <b>رمز التحقق</b> إلى حسابك.\nأرسل الرمز الآن:")
             input_states[user_id] = 'code'
         except PhoneNumberInvalidError:
             bot.reply_to(message, "❌ رقم غير صالح. تحقق من التنسيق.")
+        except Exception as e:
+            bot.reply_to(message, f"⚠️ خطأ أثناء إرسال الكود: {e}")
         return
 
     # إدخال رمز التحقق
@@ -207,10 +202,14 @@ def handle_text(message):
             bot.reply_to(message, "✅ تم تسجيل الدخول بنجاح!", reply_markup=main_keyboard())
             input_states.pop(user_id, None)
         except SessionPasswordNeededError:
-            bot.reply_to(message, "🔒 أرسل كلمة مرور 2FA الآن:")
+            bot.reply_to(message, "🔒 الحساب يحتوي على <b>كلمة مرور 2FA</b>.\nأرسلها الآن:")
             input_states[user_id] = 'password'
+        except PhoneCodeInvalidError:
+            bot.reply_to(message, "❌ رمز تحقق غير صحيح.")
+        except PhoneCodeExpiredError:
+            bot.reply_to(message, "⌛ انتهت صلاحية الرمز. أعد الإرسال.")
         except Exception as e:
-            bot.reply_to(message, f"❌ خطأ في الرمز: {e}")
+            bot.reply_to(message, f"⚠️ خطأ في التحقق: {e}")
         return
 
     # كلمة المرور
@@ -226,9 +225,12 @@ def handle_text(message):
 
     # تغيير الاسم
     if state == 'set_name':
+        if not is_authorized_sync():
+            bot.reply_to(message, "❌ يجب تسجيل الدخول أولاً.")
+            return
         try:
             run_async(user_client(UpdateProfileRequest(first_name=text)))
-            bot.reply_to(message, f"✅ تم تغيير الاسم إلى {text}")
+            bot.reply_to(message, f"✅ تم تغيير الاسم إلى <b>{text}</b>")
         except Exception as e:
             bot.reply_to(message, f"❌ خطأ: {e}")
         input_states.pop(user_id, None)
@@ -236,6 +238,9 @@ def handle_text(message):
 
     # تغيير السيرة
     if state == 'set_bio':
+        if not is_authorized_sync():
+            bot.reply_to(message, "❌ يجب تسجيل الدخول أولاً.")
+            return
         if len(text) > 170:
             bot.reply_to(message, "❌ السيرة طويلة جدًا (الحد 170 حرف).")
             return
@@ -249,18 +254,22 @@ def handle_text(message):
 
     # تغيير الصورة
     if state == 'set_photo':
+        if not is_authorized_sync():
+            bot.reply_to(message, "❌ يجب تسجيل الدخول أولاً.")
+            return
         if not os.path.exists(text):
-            bot.reply_to(message, f"❌ الملف {text} غير موجود.")
+            bot.reply_to(message, f"❌ الملف <code>{text}</code> غير موجود.")
             return
         try:
             file = run_async(user_client.upload_file(text))
             run_async(user_client(UploadProfilePhotoRequest(file)))
-            bot.reply_to(message, f"✅ تم تغيير الصورة إلى {text}")
+            bot.reply_to(message, f"✅ تم تغيير الصورة إلى <code>{text}</code>")
         except Exception as e:
-            bot.reply_to(message, f"❌ خطأ: {e}")
+            bot.reply_to(message, f"❌ خطأ أثناء تغيير الصورة: {e}")
         input_states.pop(user_id, None)
         return
 
+    # لا يوجد حالة نشطة
     bot.reply_to(message, "استخدم /start أو الأزرار للتحكم.")
 
 # === تشغيل البوت ===
