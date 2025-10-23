@@ -7,7 +7,7 @@ from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotos
 # بيانات API
 API_ID = 27227913  # ضع API_ID الخاص بك
 API_HASH = 'ba805b182eca99224403dbcd5d4f50aa'  # ضع API_HASH الخاص بك
-BOT_TOKEN = '8396394703:AAFaGheS7ExQG7IDQJQRbkonMf66Id5Y'  # ضع توكن البوت الخاص بك
+BOT_TOKEN = '8274634944:AAEOrWf0oBAgwaYcIRHAynVzDv43xqgXzec'  # ضع توكن البوت الخاص بك
 
 user_sessions = {}
 
