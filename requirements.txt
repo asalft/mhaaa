@@ -4,6 +4,8 @@ requests
 telegram
 telebot
 pyrogram
+CallbackQueryHandler
+
 
 
 
