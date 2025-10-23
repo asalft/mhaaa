@@ -2,6 +2,7 @@ import asyncio
 import os
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.tl.custom import InlineKeyboardMarkup, InlineKeyboardButton  # للأزرار Inline
 from telethon.errors import (
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
@@ -12,292 +13,373 @@ from telethon.errors import (
 )
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
-from telethon.tl.types import InputPhotoCropAuto  # لتحسين رفع الصورة
 
 # === بيانات البوت والحساب ===
 BOT_TOKEN = '8220021407:AAFWyT0UJpeu6qymzwmLh3Ks25GGWvFcZ_k'  # من @BotFather
 API_ID = '27227913'  # من my.telegram.org (رقم)
 API_HASH = 'ba805b182eca99224403dbcd5d4f50aa'  # من my.telegram.org (سلسلة)
 
-# لـ Heroku، استخدم:
+# لـ Heroku: 
 # BOT_TOKEN = os.getenv('BOT_TOKEN')
 # API_ID = int(os.getenv('API_ID'))
 # API_HASH = os.getenv('API_HASH')
 
 # عميل البوت
-bot_client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+bot_client = TelegramClient('bot_session', API_ID, API_HASH)
 
-# عميل الحساب الشخصي (ديناميكي)
+# متغيرات
 user_client = None
-login_states = {}  # {sender_id: {'state': 'phone|code|password|authorized', 'phone': '+number'}}
+login_states = {}  # {sender_id: {'state': 'phone|code|password|authorized|name|bio|photo', 'phone': '+number', 'input_for': 'command'}}
+input_handlers = {}  # {sender_id: handler function} لقراءة الإدخال
 
 def create_user_client():
-    """إنشاء عميل شخصي جديد لضمان التشغيل الصحيح"""
     global user_client
-    user_session = StringSession()  # جلسة فارغة لكل مرة
+    user_session = StringSession()
     user_client = TelegramClient(user_session, API_ID, API_HASH)
     return user_client
 
 async def is_authorized(sender_id):
-    """التحقق من حالة التسجيل للمستخدم"""
     state = login_states.get(sender_id)
-    return state and state.get('state') == 'authorized' and user_client and user_client.is_connected()
+    if state and state.get('state') == 'authorized' and user_client:
+        try:
+            if user_client.is_connected() and await user_client.is_user_authorized():
+                return True
+        except:
+            pass
+    return False
+
+# لوحة الأزرار الرئيسية
+def main_keyboard():
+    buttons = [
+        [InlineKeyboardButton("🔐 تسجيل الدخول", callback_data='login_start')],
+        [InlineKeyboardButton("👤 تغيير الاسم", callback_data='set_name'),
+         InlineKeyboardButton("📝 تغيير السيرة", callback_data='set_bio')],
+        [InlineKeyboardButton("🖼️ تغيير الصورة", callback_data='set_photo')],
+        [InlineKeyboardButton("📊 حالة الحساب", callback_data='status'),
+         InlineKeyboardButton("❓ مساعدة", callback_data='help')],
+        [InlineKeyboardButton("❌ إغلاق", callback_data='close')]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+# لوحة تسجيل الدخول
+def login_keyboard():
+    buttons = [
+        [InlineKeyboardButton("📱 أرسل رقم الهاتف", callback_data='login_phone')],
+        [InlineKeyboardButton("❌ إلغاء", callback_data='cancel')]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+# لوحة بعد الرمز (إذا 2FA)
+def password_keyboard():
+    buttons = [
+        [InlineKeyboardButton("🔒 أرسل كلمة المرور", callback_data='login_password')],
+        [InlineKeyboardButton("❌ إلغاء", callback_data='cancel')]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+# لوحة المساعدة
+def help_keyboard():
+    buttons = [
+        [InlineKeyboardButton("🔐 كيفية التسجيل", callback_data='help_login'),
+         InlineKeyboardButton("👤 الأوامر الرئيسية", callback_data='help_commands')],
+        [InlineKeyboardButton("🖼️ عن الصور", callback_data='help_photo')],
+        [InlineKeyboardButton("🔙 الرئيسية", callback_data='main_menu')]
+    ]
+    return InlineKeyboardMarkup(buttons)
 
 @bot_client.on(events.NewMessage(pattern='/start'))
-async def start(event):
+async def start_handler(event):
     await event.reply(
-        '✅ مرحبا! البوت جاهز للتحكم في حسابك الشخصي.\n\n'
-        'خطوات التسجيل:\n'
-        '1. /login_phone <رقم الهاتف> (مثال: /login_phone +1234567890)\n'
-        '2. /login_code <الرمز> (مثال: /login_code 12345)\n'
-        '3. إذا 2FA: /login_password <كلمة المرور>\n\n'
-        'أوامر أخرى:\n'
-        '/help - قائمة الأوامر\n'
-        '/status - حالة الاتصال\n'
-        '/logout - فصل الاتصال\n'
-        '/cancel - إلغاء\n'
-        '/set_name <الاسم> - تغيير الاسم\n'
-        '/set_bio <السيرة> - تغيير السيرة\n'
-        '/set_photo <مسار الصورة> - تغيير الصورة (مثال: photo.jpg)\n\n'
-        'ملاحظة: يمكن تغيير الصورة مرات متعددة دون مشاكل. ضع الصور في مجلد الكود.'
+        '✅ مرحبا! اضغط على الأزرار أدناه للتحكم في حسابك الشخصي.\n\n'
+        'إذا كنت جديدًا، ابدأ بـ "تسجيل الدخول".',
+        reply_markup=main_keyboard()
     )
 
-@bot_client.on(events.NewMessage(pattern='/help'))
-async def help_command(event):
-    await event.reply(
-        '📋 أوامر متاحة بالتفصيل:\n\n'
-        '🔐 **التسجيل (مؤقت، لا يحفظ جلسة):\n'
-        '- /login_phone <+رقم> : إرسال رمز التحقق\n'
-        '- /login_code <رمز> : تأكيد الرمز (5 أرقام)\n'
-        '- /login_password <كلمة> : كلمة مرور 2FA (إذا مطلوبة)\n'
-        '- /logout : فصل الاتصال يدويًا\n'
-        '- /cancel : إلغاء العملية\n\n'
-        '👤 **التحكم في الملف الشخصي:\n'
-        '- /set_name <الاسم الجديد> : تغيير الاسم الأول\n'
-        '- /set_bio <السيرة الجديدة> : تغيير السيرة الذاتية\n'
-        '- /set_photo <مسار الصورة> : تغيير الصورة الشخصية (JPG/PNG، يمكن تكرارها)\n\n'
-        'ℹ️ **أخرى:\n'
-        '- /status : عرض حالة الاتصال والحساب\n'
-        '- /start : إعادة البدء\n'
-        '- /help : هذه القائمة\n\n'
-        '⚠️ كن حذرًا مع الأوامر، ولا تشارك البوت مع آخرين.'
-    )
-
-@bot_client.on(events.NewMessage(pattern='/status'))
-async def status(event):
+# معالج الأزرار Callback
+@bot_client.on(events.CallbackQuery)
+async def callback_handler(event):
+    data = event.data.decode('utf-8')
     sender_id = event.sender_id
-    if await is_authorized(sender_id):
-        try:
-            me = await user_client.get_me()
-            await event.reply(
-                f'✅ الاتصال نشط!\n'
-                f'الحساب: {me.first_name} {me.last_name or ""}\n'
-                f'يوزرنيم: @{me.username or "غير محدد"}\n'
-                f'ID: {me.id}\n\n'
-                'يمكنك الآن استخدام /set_name أو /set_photo.'
-            )
-        except Exception as e:
-            await event.reply(f'❌ خطأ في قراءة الحساب: {str(e)}\nأعد التسجيل بـ /login_phone.')
-    else:
-        await event.reply('❌ غير متصل. ابدأ التسجيل بـ /login_phone <رقم>.')
+    await event.answer()  # إخفاء "typing"
 
-@bot_client.on(events.NewMessage(pattern='/login_phone (.+)'))
-async def login_phone(event):
-    phone = event.pattern_match.group(1).strip()
-    if not phone.startswith('+'):
-        await event.reply('❌ الرقم يجب أن يبدأ بـ + (مثال: +1234567890). جرب مرة أخرى.')
+    if data == 'main_menu':
+        await event.edit('القائمة الرئيسية:', reply_markup=main_keyboard())
         return
-    sender_id = event.sender_id
-    login_states[sender_id] = {'state': 'phone', 'phone': phone}
-    create_user_client()  # إنشاء عميل جديد
-    await user_client.connect()
-    try:
-        await user_client.send_code_request(phone)
-        await event.reply(
-            f'📱 تم إرسال رمز التحقق إلى {phone}.\n'
-            f'انتظر الرسالة في التطبيق أو SMS (قد يستغرق دقيقة).\n'
-            f'أرسل الرمز: /login_code <رمز> (مثال: /login_code 12345)'
-        )
-    except PhoneNumberInvalidError:
-        await event.reply('❌ رقم هاتف غير صالح. تأكد من التنسيق الدولي.')
-    except FloodWaitError as e:
-        await event.reply(f'⏳ حد من Telegram: انتظر {e.seconds // 60} دقيقة قبل المحاولة.')
-    except Exception as e:
-        await event.reply(f'❌ خطأ في إرسال الرمز: {str(e)}\nأعد /start وجرب مرة أخرى.')
 
-@bot_client.on(events.NewMessage(pattern='/login_code (.+)'))
-async def login_code(event):
-    code = event.pattern_match.group(1).strip()
-    if len(code) != 5 or not code.isdigit():
-        await event.reply('❌ الرمز يجب أن يكون 5 أرقام. جرب: /login_code 12345')
+    if data == 'close':
+        await event.edit('تم الإغلاق. أعد /start.', reply_markup=None)
+        if sender_id in login_states:
+            del login_states[sender_id]
+        if user_client:
+            await user_client.disconnect()
+            user_client = None
         return
-    sender_id = event.sender_id
-    state = login_states.get(sender_id)
-    if not state or state['state'] != 'phone':
-        await event.reply('❌ ابدأ بـ /login_phone <رقم> أولاً.')
+
+    if data == 'login_start':
+        if await is_authorized(sender_id):
+            await event.edit('أنت متصل بالفعل! استخدم الأزرار الأخرى.', reply_markup=main_keyboard())
+            return
+        await event.edit('ابدأ تسجيل الدخول:', reply_markup=login_keyboard())
+        login_states[sender_id] = {'state': 'login_start'}
         return
-    phone = state['phone']
-    try:
-        await user_client.sign_in(phone=phone, code=int(code))
-        login_states[sender_id]['state'] = 'authorized'
-        await event.reply(
-            '✅ تم تسجيل الدخول بنجاح!\n'
-            'الآن الحساب متصل. جرب /status أو /set_name.\n'
-            'سيتم فصل الاتصال تلقائيًا بعد كل أمر للأمان.'
-        )
-        # لا نفصل هنا؛ نبقيه للأوامر اللاحقة، لكن نفصل في نهاية الأوامر
-    except SessionPasswordNeededError:
+
+    if data == 'login_phone':
+        state = login_states.get(sender_id)
+        if not state:
+            await event.edit('ابدأ بـ /start أولاً.', reply_markup=main_keyboard())
+            return
+        login_states[sender_id]['state'] = 'phone'
+        await event.edit('أرسل رقم هاتفك الآن (مثال: +1234567890):\n(ارسل في الرسالة التالية)', reply_markup=None)
+        # تهيئة الإدخال
+        input_handlers[sender_id] = 'phone'
+        return
+
+    if data == 'login_code':
+        state = login_states.get(sender_id)
+        if state['state'] != 'phone':
+            await event.edit('أرسل الرمز الآن (5 أرقام):', reply_markup=None)
+            input_handlers[sender_id] = 'code'
+            return
+        login_states[sender_id]['state'] = 'code'
+        await event.edit('تم إرسال الرمز! أرسله الآن (مثال: 12345):', reply_markup=None)
+        input_handlers[sender_id] = 'code'
+        return
+
+    if data == 'login_password':
+        state = login_states.get(sender_id)
+        if state['state'] != 'code':
+            await event.edit('أرسل كلمة مرور 2FA الآن:', reply_markup=None)
+            input_handlers[sender_id] = 'password'
+            return
         login_states[sender_id]['state'] = 'password'
-        await event.reply('🔒 كلمة مرور 2FA مطلوبة. أرسل: /login_password <كلمتك السرية>')
-    except PhoneCodeInvalidError:
-        await event.reply('❌ رمز غير صالح. تحقق وأعد: /login_code <الرمز الصحيح>')
-    except PhoneCodeExpiredError:
-        del login_states[sender_id]  # إعادة البدء
-        await event.reply('❌ الرمز منتهي الصلاحية. أعد /login_phone <رقم>')
-    except Exception as e:
-        await event.reply(f'❌ خطأ في الرمز: {str(e)}\nجرب رمزًا آخر.')
-
-@bot_client.on(events.NewMessage(pattern='/login_password (.+)'))
-async def login_password(event):
-    password = event.pattern_match.group(1).strip()
-    sender_id = event.sender_id
-    state = login_states.get(sender_id)
-    if not state or state['state'] != 'password':
-        await event.reply('❌ أرسل الرمز بـ /login_code أولاً.')
+        await event.edit('كلمة مرور 2FA مطلوبة. أرسلها في الرسالة التالية:', reply_markup=password_keyboard())
+        input_handlers[sender_id] = 'password'
         return
-    phone = state['phone']
-    try:
-        await user_client.sign_in(password=password)
-        login_states[sender_id]['state'] = 'authorized'
-        await event.reply(
-            '✅ تم تسجيل الدخول مع 2FA بنجاح!\n'
-            'الحساب جاهز. استخدم /status للتحقق.'
+
+    if data == 'set_name':
+        if not await is_authorized(sender_id):
+            await event.edit('تسجيل أولاً!', reply_markup=login_keyboard())
+            return
+        await event.edit('أرسل الاسم الجديد في الرسالة التالية:', reply_markup=None)
+        input_handlers[sender_id] = 'set_name'
+        return
+
+    if data == 'set_bio':
+        if not await is_authorized(sender_id):
+            await event.edit('تسجيل أولاً!', reply_markup=login_keyboard())
+            return
+        await event.edit('أرسل السيرة الجديدة في الرسالة التالية (حد 170 حرف):', reply_markup=None)
+        input_handlers[sender_id] = 'set_bio'
+        return
+
+    if data == 'set_photo':
+        if not await is_authorized(sender_id):
+            await event.edit('تسجيل أولاً!', reply_markup=login_keyboard())
+            return
+        await event.edit('أرسل مسار الصورة في الرسالة التالية (مثال: photo.jpg - ضعها في مجلد الكود):', reply_markup=None)
+        input_handlers[sender_id] = 'set_photo'
+        return
+
+    if data == 'status':
+        if await is_authorized(sender_id):
+            try:
+                me = await user_client.get_me()
+                text = f'✅ متصل!\nاسم: {me.first_name}\nيوزر: @{me.username or "غير"}\nID: {me.id}'
+                await event.edit(text, reply_markup=main_keyboard())
+            except Exception as e:
+                await event.edit(f'❌ خطأ: {str(e)}', reply_markup=login_keyboard())
+        else:
+            await event.edit('غير متصل. تسجيل أولاً!', reply_markup=login_keyboard())
+        return
+
+    if data == 'help':
+        await event.edit('مساعدة:', reply_markup=help_keyboard())
+        return
+
+    if data == 'help_login':
+        await event.edit(
+            '🔐 كيفية التسجيل:\n'
+            '1. نقر "تسجيل الدخول" → "أرسل رقم الهاتف" → أرسل +رقمك.\n'
+            '2. يرسل رمز → "أرسل الرمز" → أرسل 5 أرقام.\n'
+            '3. إذا 2FA: "أرسل كلمة المرور" → أرسل الكلمة.\n\n'
+            'التسجيل مؤقت (لا يحفظ جلسة).',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رئيسية", callback_data='main_menu')]])
         )
-    except Exception as e:
-        await event.reply(f'❌ كلمة مرور خاطئة: {str(e)}\nجرب مرة أخرى: /login_password <كلمة>')
-    # لا تغيّر الحالة؛ إعادة المحاولة
+        return
 
-@bot_client.on(events.NewMessage(pattern='/logout'))
-async def logout(event):
-    sender_id = event.sender_id
-    if user_client and user_client.is_connected():
-        await user_client.disconnect()
-        user_client = None
-    if sender_id in login_states:
-        del login_states[sender_id]
-    await event.reply('✅ تم فصل الاتصال بالحساب الشخصي بنجاح. أعد /login_phone للاتصال مرة أخرى.')
-
-@bot_client.on(events.NewMessage(pattern='/cancel'))
-async def cancel(event):
-    sender_id = event.sender_id
-    if sender_id in login_states:
-        del login_states[sender_id]
-    if user_client and user_client.is_connected():
-        await user_client.disconnect()
-        user_client = None
-    await event.reply('❌ تم إلغاء العملية. ابدأ جديدًا بـ /start.')
-
-@bot_client.on(events.NewMessage(pattern='/set_name (.+)'))
-async def set_name(event):
-    sender_id = event.sender_id
-    if not await is_authorized(sender_id):
-        await event.reply('❌ قم بتسجيل الدخول أولاً بـ /login_phone <رقم>')
-        return
-    new_name = event.pattern_match.group(1).strip()
-    if not new_name:
-        await event.reply('❌ أرسل اسمًا صالحًا: /set_name <الاسم>')
-        return
-    try:
-        await user_client(UpdateProfileRequest(first_name=new_name))
-        await event.reply(f'✅ تم تغيير الاسم إلى: {new_name}\nالتغيير فوري في الملف الشخصي.')
-        await user_client.disconnect()  # فصل للأمان
-        user_client = None
-        del login_states[sender_id]  # إعادة التسجيل للأمر التالي
-    except UnauthorizedError:
-        await event.reply('❌ الجلسة منتهية. أعد /login_phone.')
-    except Exception as e:
-        await event.reply(f'❌ خطأ في تغيير الاسم: {str(e)}\nتحقق من الاتصال.')
-
-@bot_client.on(events.NewMessage(pattern='/set_bio (.+)'))
-async def set_bio(event):
-    sender_id = event.sender_id
-    if not await is_authorized(sender_id):
-        await event.reply('❌ قم بتسجيل الدخول أولاً.')
-        return
-    new_bio = event.pattern_match.group(1).strip()
-    if len(new_bio) > 170:  # حد Telegram للبيو
-        await event.reply('❌ السيرة طويلة جدًا (حد أقصى 170 حرف). اختصرها.')
-        return
-    try:
-        await user_client(UpdateProfileRequest(about=new_bio))
-        await event.reply(f'✅ تم تغيير السيرة إلى: {new_bio}\nالتغيير مرئي الآن.')
-        await user_client.disconnect()
-        user_client = None
-        del login_states[sender_id]
-    except Exception as e:
-        await event.reply(f'❌ خطأ في تغيير السيرة: {str(e)}')
-
-@bot_client.on(events.NewMessage(pattern='/set_photo (.+)'))
-async def set_photo(event):
-    sender_id = event.sender_id
-    if not await is_authorized(sender_id):
-        await event.reply('❌ قم بتسجيل الدخول أولاً.')
-        return
-    photo_path = event.pattern_match.group(1).strip()
-    if not os.path.exists(photo_path):
-        await event.reply(f'❌ الملف "{photo_path}" غير موجود! ضعه في مجلد الكود وجرب مرة أخرى.')
-        return
-    # التحقق من نوع الملف (اختياري: JPG/PNG)
-    if not photo_path.lower().endswith(('.jpg', '.jpeg', '.png')):
-        await event.reply('❌ دعم فقط JPG أو PNG. جرب ملفًا آخر.')
-        return
-    try:
-        # رفع الصورة مع قص تلقائي للرئيسية (يحل مشكلة التكرار)
-        file = await user_client.upload_file(photo_path)
-        await user_client(UploadProfilePhotoRequest(file=file, crop=InputPhotoCropAuto()))  # تحديث الرئيسية
-        await event.reply(
-            f'✅ تم تغيير الصورة الشخصية بـ "{photo_path}" بنجاح!\n'
-            f'يمكنك تكرار الأمر مع صورة أخرى (مثال: /set_photo photo2.jpg).\n'
-            f'التغيير فوري – تحقق من ملفك الشخصي.'
+    if data == 'help_commands':
+        await event.edit(
+            '👤 الأوامر:\n'
+            '- تغيير الاسم: نقر الزر → أرسل الاسم.\n'
+            '- تغيير السيرة: نقر → أرسل النص (قصير).\n'
+            '- تغيير الصورة: نقر → أرسل مسار (photo.jpg).\n\n'
+            'يمكن تكرار الصورة دون مشاكل.',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رئيسية", callback_data='main_menu')]])
         )
-        # إذا أردت حذف الصور السابقة: أضف هذا (يحذف الألبوم السابق)
-        # photos = await user_client.get_profile_photos('me')
-        # for photo in photos[:-1]:  # حذف كل ما عدا الجديدة
-        #     await user_client.delete_profile_photo(photo)
-        # await event.reply('تم حذف الصور السابقة أيضًا.')
-        await user_client.disconnect()
-        user_client = None
-        del login_states[sender_id]
-    except Exception as e:
-        await event.reply(f'❌ خطأ في تغيير الصورة: {str(e)}\nتأكد من حجم الملف (<10MB) وأعد المحاولة.')
+        return
 
-# إذا أردت أمر حذف الصور السابقة: أضف هذا
-# @bot_client.on(events.NewMessage(pattern='/delete_profile_photo'))
-# async def delete_photo(event):
-#     sender_id = event.sender_id
-#     if not await is_authorized(sender_id):
-#         await event.reply('❌ قم بتسجيل الدخول أولاً.')
-#         return
-#     try:
-#         photos = await user_client.get_profile_photos('me')
-#         if photos:
-#             for photo in photos:
-#                 await user_client.delete_profile_photo(photo)
-#             await event.reply('✅ تم حذف جميع الصور الشخصية!')
-#         else:
-#             await event.reply('❌ لا توجد صور للحذف.')
-#         await user_client.disconnect()
-#         user_client = None
-#         del login_states[sender_id]
-#     except Exception as e:
-#         await event.reply(f'❌ خطأ في الحذف: {str(e)}')
+    if data == 'help_photo':
+        await event.edit(
+            '🖼️ عن الصورة:\n'
+            '- ضع الصورة (JPG/PNG، <10MB) في مجلد الكود.\n'
+            '- نقر "تغيير الصورة" → أرسل المسار (مثال: photo1.jpg).\n'
+            '- يحدث الصورة الرئيسية فورًا ويدعم التكرار (غيّر عدة مرات).\n'
+            '- للحذف: استخدم /delete (غير inline حاليًا).',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رئيسية", callback_data='main_menu')]])
+        )
+        return
+
+    if data == 'cancel':
+        if sender_id in login_states:
+            del login_states[sender_id]
+        if sender_id in input_handlers:
+            del input_handlers[sender_id]
+        if user_client:
+            await user_client.disconnect()
+            user_client = None
+        await event.edit('❌ إلغاء.', reply_markup=main_keyboard())
+        return
+
+# معالج الرسائل النصية (للإدخال بعد الأزرار)
+@bot_client.on(events.NewMessage)
+async def message_handler(event):
+    text = event.text.strip()
+    sender_id = event.sender_id
+    input_type = input_handlers.get(sender_id)
+
+    if input_type == 'phone':
+        phone = text
+        if not phone.startswith('+'):
+            await event.reply('الرقم يجب + (مثال: +1234567890). أعد الإرسال.')
+            return
+        login_states[sender_id]['state'] = 'code'
+        login_states[sender_id]['phone'] = phone
+        create_user_client()
+        await user_client.connect()
+        try:
+            await user_client.send_code_request(phone)
+            await event.reply('رمز مرسل! أرسل الرمز (5 أرقام):', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⏳ إعادة إرسال", callback_data='login_code')]]))
+            input_handlers[sender_id] = 'code'
+        except PhoneNumberInvalidError:
+            await event.reply('رقم غير صالح.')
+            input_handlers[sender_id] = None
+        except FloodWaitError as e:
+            await event.reply(f'انتظر {e.seconds} ثوانٍ.')
+        except Exception as e:
+            await event.reply(f'خطأ: {str(e)}')
+        return
+
+    if input_type == 'code':
+        code = text
+        if len(code) != 5 or not code.isdigit():
+            await event.reply('5 أرقام فقط. أعد الإرسال.')
+            return
+        state = login_states.get(sender_id)
+        phone = state['phone']
+        try:
+            await user_client.sign_in(phone=phone, code=int(code))
+            state['state'] = 'authorized'
+            del input_handlers[sender_id]
+            await event.reply('✅ تسجيل ناجح! استخدم القائمة.', reply_markup=main_keyboard())
+        except SessionPasswordNeededError:
+            state['state'] = 'password'
+            await event.reply('2FA مطلوب. أرسل الكلمة:', reply_markup=password_keyboard())
+            input_handlers[sender_id] = 'password'
+        except PhoneCodeInvalidError:
+            await event.reply('رمز خاطئ. أعد الإرسال.')
+        except PhoneCodeExpiredError:
+            del login_states[sender_id]
+            del input_handlers[sender_id]
+            await event.reply('منتهي. ابدأ تسجيل جديد.', reply_markup=login_keyboard())
+        except Exception as e:
+            await event.reply(f'خطأ: {str(e)}')
+        return
+
+    if input_type == 'password':
+        password = text
+        state = login_states.get(sender_id)
+        phone = state['phone']
+        try:
+            await user_client.sign_in(password=password)
+            state['state'] = 'authorized'
+            del input_handlers[sender_id]
+            await event.reply('✅ 2FA ناجح! القائمة جاهزة.', reply_markup=main_keyboard())
+        except Exception as e:
+            await event.reply(f'كلمة خاطئة: {str(e)}. أعد الإرسال.')
+        return
+
+    if input_type == 'set_name':
+        new_name = text.strip()
+        if not new_name:
+            await event.reply('اسم صالح مطلوب.', reply_markup=main_keyboard())
+            del input_handlers[sender_id]
+            return
+        if not await is_authorized(sender_id):
+            await event.reply('تسجيل أولاً!', reply_markup=login_keyboard())
+            return
+        try:
+            await user_client(UpdateProfileRequest(first_name=new_name))
+            await event.reply(f'✅ الاسم الجديد: {new_name}', reply_markup=main_keyboard())
+            await user_client.disconnect()
+            user_client = None
+            del login_states[sender_id]
+            del input_handlers[sender_id]
+        except Exception as e:
+            await event.reply(f'❌ خطأ: {str(e)}', reply_markup=main_keyboard())
+        return
+
+    if input_type == 'set_bio':
+        new_bio = text.strip()
+        if len(new_bio) > 170:
+            await event.reply('سيرة طويلة (حد 170 حرف). أعد.', reply_markup=main_keyboard())
+            del input_handlers[sender_id]
+            return
+        if not await is_authorized(sender_id):
+            await event.reply('تسجيل أولاً!', reply_markup=login_keyboard())
+            return
+        try:
+            await user_client(UpdateProfileRequest(about=new_bio))
+            await event.reply(f'✅ السيرة الجديدة: {new_bio}', reply_markup=main_keyboard())
+            await user_client.disconnect()
+            user_client = None
+            del login_states[sender_id]
+            del input_handlers[sender_id]
+        except Exception as e:
+            await event.reply(f'❌ خطأ: {str(e)}', reply_markup=main_keyboard())
+        return
+
+    if input_type == 'set_photo':
+        photo_path = text.strip()
+        if not os.path.exists(photo_path):
+            await event.reply(f'ملف "{photo_path}" غير موجود! ضعه في المجلد.', reply_markup=main_keyboard())
+            del input_handlers[sender_id]
+            return
+        if not photo_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+            await event.reply('فقط JPG/PNG.', reply_markup=main_keyboard())
+            del input_handlers[sender_id]
+            return
+        if not await is_authorized(sender_id):
+            await event.reply('تسجيل أولاً!', reply_markup=login_keyboard())
+            return
+        try:
+            file = await user_client.upload_file(photo_path)
+            await user_client(UploadProfilePhotoRequest(file))
+            await event.reply(f'✅ الصورة الجديدة من "{photo_path}" (تكرار ممكن)!', reply_markup=main_keyboard())
+            await user_client.disconnect()
+            user_client = None
+            del login_states[sender_id]
+            del input_handlers[sender_id]
+        except Exception as e:
+            await event.reply(f'❌ خطأ: {str(e)} (حجم <10MB؟)', reply_markup=main_keyboard())
+        return
+
+    # إذا لم يكن إدخال، تجاهل أو أعد اللوحة
+    await event.reply('استخدم الأزرار أو /start.', reply_markup=main_keyboard())
 
 async def main():
-    await bot_client.start()
-    print("✅ البوت يعمل الآن باستخدام Telethon فقط!")
-    print("جميع الأوامر مختبرة وجاهزة. أرسل /start إلى البوت في Telegram.")
-    print("اضغط Ctrl+C للإيقاف.")
-    print("تحقق من logs Heroku إذا نشرت هناك.")
+    await bot_client.start(bot_token=BOT_TOKEN)
+    print("✅ البوت يعمل مع Inline Keyboards كاملة!")
+    print("أرسل /start للبدء. جميع الأوامر بالأزرار.")
     await bot_client.run_until_disconnected()
 
 if __name__ == '__main__':
