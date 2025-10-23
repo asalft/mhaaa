@@ -5,8 +5,8 @@ from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
 
 # بيانات API - يمكنك تغييرها يدوياً
-API_ID = 27227933  # ضع API_ID الخاص بك
-API_HASH = 'ba805b182eca99224403dbid5d4f50aa'  # ضع API_HASH الخاص بك
+API_ID = 27227913  # ضع API_ID الخاص بك
+API_HASH = 'ba805b182eca99224403dbcd5d4f50aa'  # ضع API_HASH الخاص بك
 BOT_TOKEN = '8396394703:AAFaGheS7ExQG7IDQJQRbkonMf66Id5YlcE'
 
 user_sessions = {}
